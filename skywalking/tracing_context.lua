@@ -15,8 +15,11 @@
 -- limitations under the License.
 --
 
-local Util = require('util')
+local Util = require('swutil')
 local Span = require('span')
+local CorrelationContext = require('correlation_context')
+
+local CONTEXT_CORRELATION_KEY = 'sw8-correlation'
 
 -------------- Internal Object-------------
 local Internal = {}
@@ -29,8 +32,6 @@ local Internal = {}
 --     owner,
 --     -- The first created span.
 --     first_span,
---     -- The first ref injected in this context
---     first_ref,
 --     -- Created span and still active
 --     active_spans,
 --     active_count,
@@ -44,7 +45,6 @@ local function addRefIfFirst(internal, ref)
     if internal.self_generated_trace_id == true then
         internal.self_generated_trace_id = false
         internal.owner.trace_id = ref.trace_id
-        internal.first_ref = ref
     end
 end
 
@@ -97,8 +97,8 @@ local _M = {}
 -- local TracingContext = {
 --     trace_id,
 --     segment_id,
---     service_id,
---     service_inst_id,
+--     service,
+--     service_instance,
 --     is_noop = false,
 --     internal,
 -- }
@@ -107,16 +107,16 @@ function _M.newNoOP()
     return {is_noop = true}
 end
 
-function _M.new(serviceId, serviceInstID)
-    if serviceInstID == nil then
+function _M.new(serviceName, serviceInstanceName)
+    if serviceInstanceName == nil or serviceName == nil then
         return _M.newNoOP()
     end
 
     local tracing_context = {}
     tracing_context.trace_id = Util.newID()
     tracing_context.segment_id = tracing_context.trace_id
-    tracing_context.service_id = serviceId
-    tracing_context.service_inst_id = serviceInstID
+    tracing_context.service = serviceName
+    tracing_context.service_instance = serviceInstanceName
     tracing_context.internal = Internal.new()
     tracing_context.internal.owner = tracing_context
     return tracing_context
@@ -129,14 +129,30 @@ function _M.createEntrySpan(tracingContext, operationName, parent, contextCarrie
         return Span.newNoOP()
     end
 
+    local correlationData = ''
+    if contextCarrier then
+        correlationData = contextCarrier[CONTEXT_CORRELATION_KEY]
+    end
+    tracingContext.correlation = CorrelationContext.fromSW8Value(correlationData)
+
     return Span.createEntrySpan(operationName, tracingContext, parent, contextCarrier)
 end
 
 -- Delegate to Span.createExitSpan
 -- @param contextCarrier could be nil if don't need to inject any context to propagate
-function _M.createExitSpan(tracingContext, operationName, parent, peer, contextCarrier)
+function _M.createExitSpan(tracingContext, operationName, parent, peer, contextCarrier, correlation)
     if tracingContext.is_noop then
         return Span.newNoOP()
+    end
+
+    if contextCarrier then
+        if correlation then
+            for name, value in pairs(correlation) do
+                CorrelationContext.put(tracingContext.correlation, name, value)
+            end
+        end
+
+        contextCarrier[CONTEXT_CORRELATION_KEY] = CorrelationContext.serialize(tracingContext.correlation)
     end
 
     return Span.createExitSpan(operationName, tracingContext, parent, peer, contextCarrier)
@@ -160,8 +176,8 @@ function _M.drainAfterFinished(tracingContext)
         local segment = {}
         segment.trace_id = tracingContext.trace_id
         segment.segment_id = tracingContext.segment_id
-        segment.service_id = tracingContext.service_id
-        segment.service_inst_id = tracingContext.service_inst_id
+        segment.service = tracingContext.service
+        segment.service_instance = tracingContext.service_instance
         segment.spans = tracingContext.internal.finished_spans
         return true, segment
     end

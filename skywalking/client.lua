@@ -15,10 +15,12 @@
 -- limitations under the License.
 --
 
+local SEGMENT_BATCH_COUNT = 100
+
 local Client = {}
 
--- Tracing timer does the service and instance register
--- After register successfully, it sends traces and heart beat
+-- Tracing timer reports instance properties report, keeps alive and sends traces
+-- After report instance properties successfully, it sends keep alive packages.
 function Client:startBackendTimer(backend_http_uri)
     local metadata_buffer = ngx.shared.tracing_buffer
 
@@ -29,29 +31,18 @@ function Client:startBackendTimer(backend_http_uri)
 
     local log = ngx.log
     local DEBUG = ngx.DEBUG
+    local ERR = ngx.ERR    
 
     check = function(premature)
         if not premature then
-            local serviceId = metadata_buffer:get('serviceId')
-            if (serviceId == nil or serviceId == 0) then
-                self:registerService(metadata_buffer, backend_http_uri)
-            end
-
-            -- Register is in the async way, if register successfully, go for instance register
-            serviceId = metadata_buffer:get('serviceId')
-            if (serviceId ~= nil and serviceId ~= 0) then
-                local serviceInstId = metadata_buffer:get('serviceInstId')
-                if (serviceInstId == nil or serviceInstId == 0)  then
-                    self:registerServiceInstance(metadata_buffer, backend_http_uri)
-                end
-            end
-
-            -- After all register successfully, begin to send trace segments
-            local serviceInstId = metadata_buffer:get('serviceInstId')
-            if (serviceInstId ~= nil and serviceInstId ~= 0) then
-                self:reportTraces(metadata_buffer, backend_http_uri)
+            local instancePropertiesSubmitted = metadata_buffer:get('instancePropertiesSubmitted')
+            if (instancePropertiesSubmitted == nil or instancePropertiesSubmitted == false) then
+                self:reportServiceInstance(metadata_buffer, backend_http_uri)
+            else
                 self:ping(metadata_buffer, backend_http_uri)
             end
+
+            self:reportTraces(metadata_buffer, backend_http_uri)
 
             -- do the health check
             local ok, err = new_timer(delay, check)
@@ -71,91 +62,39 @@ function Client:startBackendTimer(backend_http_uri)
     end
 end
 
--- Register service
-function Client:registerService(metadata_buffer, backend_http_uri)
+function Client:reportServiceInstance(metadata_buffer, backend_http_uri)
     local log = ngx.log
     local DEBUG = ngx.DEBUG
     local ERR = ngx.ERR
 
     local serviceName = metadata_buffer:get('serviceName')
+    local serviceInstanceName = metadata_buffer:get('serviceInstanceName')
 
     local cjson = require('cjson')
-    local serviceRegister = require("register").newServiceRegister(serviceName)
-    local serviceRegisterParam = cjson.encode(serviceRegister)
+    local reportInstance = require("management").newReportInstanceProperties(serviceName, serviceInstanceName)
+    local reportInstanceParam, err = cjson.encode(reportInstance)
+    if err then
+        log(ERR, "Request to report instance fails, ", err)
+        return
+    end
 
     local http = require('resty.http')
     local httpc = http.new()
-    local res, err = httpc:request_uri(backend_http_uri .. '/v2/service/register', {
+    local res, err = httpc:request_uri(backend_http_uri .. '/v3/management/reportProperties', {
         method = "POST",
-        body = serviceRegisterParam,
+        body = reportInstanceParam,
         headers = {
             ["Content-Type"] = "application/json",
         },
     })
 
     if not res then
-        log(ERR, "Service register fails, " .. err)
+        log(ERR, "Instance report fails, ", err)
     elseif res.status == 200 then
-        log(DEBUG, "Service register response = " .. res.body)
-        local registerResults = cjson.decode(res.body)
-
-        for i, result in ipairs(registerResults)
-        do
-            if result.key == serviceName then
-                local serviceId = result.value
-                log(DEBUG, "Service registered, service id = " .. serviceId)
-                metadata_buffer:set('serviceId', serviceId)
-            end
-        end
+        log(DEBUG, "Instance report response = ", res.body)
+        metadata_buffer:set('instancePropertiesSubmitted', true)
     else
-        log(ERR, "Service register fails, response code " .. res.status)
-    end
-end
-
--- Register service instance
-function Client:registerServiceInstance(metadata_buffer, backend_http_uri)
-    local log = ngx.log
-    local DEBUG = ngx.DEBUG
-    local ERR = ngx.ERR
-
-    local serviceInstName = 'name:' .. metadata_buffer:get('serviceInstanceName')
-    metadata_buffer:set('serviceInstanceUUID', serviceInstName)
-
-    local cjson = require('cjson')
-    local serviceInstanceRegister = require("register").newServiceInstanceRegister(
-        metadata_buffer:get('serviceId'),
-        serviceInstName,
-        ngx.now() * 1000)
-    local serviceInstanceRegisterParam = cjson.encode(serviceInstanceRegister)
-
-    local http = require('resty.http')
-    local httpc = http.new()
-    local res, err = httpc:request_uri(backend_http_uri .. '/v2/instance/register', {
-        method = "POST",
-        body = serviceInstanceRegisterParam,
-        headers = {
-            ["Content-Type"] = "application/json",
-        },
-    })
-
-    if err == nil then
-        if res.status == 200 then
-            log(DEBUG, "Service Instance register response = " .. res.body)
-            local registerResults = cjson.decode(res.body)
-
-            for i, result in ipairs(registerResults)
-            do
-                if result.key == serviceInstName then
-                    local serviceId = result.value
-                    log(DEBUG, "Service Instance registered, service instance id = " .. serviceId)
-                    metadata_buffer:set('serviceInstId', serviceId)
-                end
-            end
-        else
-            log(ERR, "Service Instance register fails, response code " .. res.status)
-        end
-    else
-        log(ERR, "Service Instance register fails, " .. err)
+        log(ERR, "Instance report fails, response code ", res.status)
     end
 end
 
@@ -165,16 +104,19 @@ function Client:ping(metadata_buffer, backend_http_uri)
     local DEBUG = ngx.DEBUG
     local ERR = ngx.ERR
 
+    local serviceName = metadata_buffer:get('serviceName')
+    local serviceInstanceName = metadata_buffer:get('serviceInstanceName')
+
     local cjson = require('cjson')
-    local pingPkg = require("register").newServiceInstancePingPkg(
-        metadata_buffer:get('serviceInstId'),
-        metadata_buffer:get('serviceInstanceUUID'),
-        ngx.now() * 1000)
-    local pingPkgParam = cjson.encode(pingPkg)
+    local pingPkg = require("management").newServiceInstancePingPkg(serviceName, serviceInstanceName)
+    local pingPkgParam, err = cjson.encode(pingPkg)
+    if err then
+        log(ERR, "Agent ping fails, ", err)
+    end
 
     local http = require('resty.http')
     local httpc = http.new()
-    local res, err = httpc:request_uri(backend_http_uri .. '/v2/instance/heartbeat', {
+    local res, err = httpc:request_uri(backend_http_uri .. '/v3/management/keepAlive', {
         method = "POST",
         body = pingPkgParam,
         headers = {
@@ -184,11 +126,41 @@ function Client:ping(metadata_buffer, backend_http_uri)
 
     if err == nil then
         if res.status ~= 200 then
-            log(ERR, "Agent ping fails, response code " .. res.status)
+            log(ERR, "Agent ping fails, response code ", res.status)
         end
     else
-        log(ERR, "Agent ping fails, " .. err)
+        log(ERR, "Agent ping fails, ", err)
     end
+end
+
+-- Send segemnts data to backend
+local function sendSegments(segmentTransform, backend_http_uri)
+    local log = ngx.log
+    local DEBUG = ngx.DEBUG
+    local ERR = ngx.ERR
+
+    local http = require('resty.http')
+    local httpc = http.new()
+
+    local res, err = httpc:request_uri(backend_http_uri .. '/v3/segments', {
+        method = "POST",
+        body = segmentTransform,
+        headers = {
+            ["Content-Type"] = "application/json",
+        },
+    })
+
+    if err == nil then
+        if res.status ~= 200 then
+            log(ERR, "Segment report fails, response code ", res.status)
+            return false
+        end
+    else
+        log(ERR, "Segment report fails, ", err)
+        return false
+    end
+
+    return true
 end
 
 -- Report trace segments to the backend
@@ -199,39 +171,39 @@ function Client:reportTraces(metadata_buffer, backend_http_uri)
 
     local queue = ngx.shared.tracing_buffer
     local segment = queue:rpop('segment')
+    local segmentTransform = ''
 
-    local count = 0;
-
-    local http = require('resty.http')
-    local httpc = http.new()
+    local count = 0
+    local totalCount = 0
 
     while segment ~= nil
     do
-        local res, err = httpc:request_uri(backend_http_uri .. '/v2/segments', {
-            method = "POST",
-            body = segment,
-            headers = {
-                ["Content-Type"] = "application/json",
-            },
-        })
-
-        if err == nil then
-            if res.status ~= 200 then
-                log(ERR, "Segment report fails, response code " .. res.status)
-                break
-            else
-                count = count + 1
-            end
-        else
-            log(ERR, "Segment report fails, " .. err)
-            break
+        if #segmentTransform > 0 then
+            segmentTransform = segmentTransform .. ','
         end
 
+        segmentTransform = segmentTransform .. segment
         segment = queue:rpop('segment')
+        count = count + 1
+
+        if count >= SEGMENT_BATCH_COUNT then
+            if sendSegments('[' .. segmentTransform .. ']', backend_http_uri) then
+                totalCount = totalCount + count
+            end
+
+            segmentTransform = ''
+            count = 0
+        end
     end
 
-    if count > 0 then
-        log(ERR, count,  " segments reported.")
+    if #segmentTransform > 0 then
+        if sendSegments('[' .. segmentTransform .. ']', backend_http_uri) then
+            totalCount = totalCount + count
+        end
+    end
+
+    if totalCount > 0 then
+        log(DEBUG, totalCount,  " segments reported.")
     end
 end
 

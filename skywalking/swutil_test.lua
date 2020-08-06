@@ -16,15 +16,13 @@
 --
 
 local lu = require('luaunit')
-local Util = require('util')
+local Util = require('swutil')
 
 TestUtil = {}
     function TestUtil.testNewID()
         local id = Util.newID()
 
-        lu.assertNotNil(id[1])
-        lu.assertNotNil(id[2])
-        lu.assertNotNil(id[3])
+        lu.assertNotNil(id)
     end
 
     function TestUtil.testTimestamp()

@@ -18,27 +18,23 @@ local Span = require('span')
 
 local Tracer = {}
 
-function Tracer:start(upstream_name)
+function Tracer:start(upstream_name, correlation)
     local metadata_buffer = ngx.shared.tracing_buffer
     local TC = require('tracing_context')
     local Layer = require('span_layer')
 
     local tracingContext
     local serviceName = metadata_buffer:get("serviceName")
-    local serviceInstId = metadata_buffer:get("serviceInstId")
-    local serviceId = metadata_buffer:get('serviceId')
-    if (serviceInstId ~= nil and serviceInstId ~= 0) then
-        tracingContext = TC.new(serviceId, serviceInstId)
-    else
-        tracingContext = TC.newNoOP()
-    end
+    local serviceInstanceName = metadata_buffer:get('serviceInstanceName')
+    tracingContext = TC.new(serviceName, serviceInstanceName)
 
     -- Constant pre-defined in SkyWalking main repo
-    -- 84 represents Nginx
+    -- 6000 represents Nginx
     local nginxComponentId = 6000
 
     local contextCarrier = {}
-    contextCarrier["sw6"] = ngx.req.get_headers()["sw6"]
+    contextCarrier["sw8"] = ngx.req.get_headers()["sw8"]
+    contextCarrier["sw8-correlation"] = ngx.req.get_headers()["sw8-correlation"]
     local entrySpan = TC.createEntrySpan(tracingContext, ngx.var.uri, nil, contextCarrier)
     Span.start(entrySpan, ngx.now() * 1000)
     Span.setComponentId(entrySpan, nginxComponentId)
@@ -54,7 +50,7 @@ function Tracer:start(upstream_name)
 
     local upstreamServerName = upstream_name
     ------------------------------------------------------
-    local exitSpan = TC.createExitSpan(tracingContext, upstreamUri, entrySpan, upstreamServerName, contextCarrier)
+    local exitSpan = TC.createExitSpan(tracingContext, upstreamUri, entrySpan, upstreamServerName, contextCarrier, correlation)
     Span.start(exitSpan, ngx.now() * 1000)
     Span.setComponentId(exitSpan, nginxComponentId)
     Span.setLayer(exitSpan, Layer.HTTP)
@@ -85,11 +81,11 @@ function Tracer:prepareForReport()
         local status, segment = TC.drainAfterFinished(ngx.ctx.tracingContext)
         if status then
             local segmentJson = require('cjson').encode(Segment.transform(segment))
-            ngx.log(ngx.DEBUG, 'segment = ' .. segmentJson)
+            ngx.log(ngx.DEBUG, 'segment = ', segmentJson)
 
             local queue = ngx.shared.tracing_buffer
             local length = queue:lpush('segment', segmentJson)
-            ngx.log(ngx.DEBUG, 'segment buffer size = ' .. queue:llen('segment'))
+            ngx.log(ngx.DEBUG, 'segment buffer size = ', queue:llen('segment'))
         end
     end
 end
