@@ -9,7 +9,7 @@ RUN set -eux ;\
 	tar --strip-components 1 -zxvf skywalking.tar.gz
 
 # 二阶段构建
-FROM quay.io/kubernetes-ingress-controller/nginx-ingress-controller:0.26.1
+FROM k8s.gcr.io/ingress-nginx/controller:v0.42.0
 
 COPY --from=0 /tmp/lib  /etc/nginx/lua
 
