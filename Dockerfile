@@ -1,6 +1,16 @@
-FROM eu.gcr.io/k8s-artifacts-prod/ingress-nginx/controller:v0.34.1@sha256:0e072dddd1f7f8fc8909a2ca6f65e76c5f0d2fcfb8be47935ae3457e8bbceb20
+FROM busybox
+
+WORKDIR /tmp
+
+ENV SKYWALKING_VERSION v0.3.0
+
+RUN set -eux ;\
+	wget -O skywalking.tar.gz https://github.com/apache/skywalking-nginx-lua/archive/${SKYWALKING_VERSION}.tar.gz ;\
+	tar --strip-components 1 -zxvf skywalking.tar.gz
+
+# 二阶段构建
+FROM quay.io/kubernetes-ingress-controller/nginx-ingress-controller:0.26.1
+
+COPY --from=0 /tmp/lib  /etc/nginx/lua
 
 ADD nginx.tmpl /etc/nginx/template
-ADD skywalking /etc/nginx/lua/skywalking
-
-
