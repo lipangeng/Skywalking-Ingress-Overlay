@@ -1067,7 +1067,7 @@ stream {
                 balancer.rewrite()
                 plugins.run()
 
-                # Skywalking
+                -- Skywalking
                 require("tracer"):start("{{ buildUpstreamName $location | quote }}")
             }
 
@@ -1083,7 +1083,7 @@ stream {
             }
 
             body_filter_by_lua_block {
-                # Skywalking
+                -- Skywalking
                 if ngx.arg[2] then
                     require("tracer"):finish()
                 end
@@ -1097,7 +1097,7 @@ stream {
 
                 plugins.run()
 
-                # Skywalking
+                -- Skywalking
                 require("tracer"):prepareForReport()
             }
 
