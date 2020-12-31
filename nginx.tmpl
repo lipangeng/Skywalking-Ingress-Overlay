@@ -1068,7 +1068,7 @@ stream {
                 plugins.run()
 
                 -- Skywalking
-                require("tracer"):start("{{ buildUpstreamName $location | quote }}")
+                require("tracer"):start({{ buildUpstreamName $location | quote }})
             }
 
             # be careful with `access_by_lua_block` and `satisfy any` directives as satisfy any
