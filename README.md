@@ -10,13 +10,13 @@ SW_SERVICE_NAME: 服务名称
 
 SW_SERVICE_INSTANCE_NAME: 实例名称，可以取自ID
 
-SW_BACKEND_SERVERS: 后端服务地址，使用http端口。如：http://skywalking-aop.skywalking:12800
+SW_BACKEND_SERVERS: 后端服务地址，使用http端口,尽量使用Service IP，使用Service地址有可能会出现无法解析异常。如：http://10.2.137.232:12800
 
 ```
 - name: SW_SERVICE_NAME
   value: Kubernetes Ingress
 - name: SW_BACKEND_SERVERS
-  value: http://skywalking-aop.skywalking:12800
+  value: http://10.2.137.232:12800
 - name: SW_SERVICE_INSTANCE_NAME
   valueFrom:
     fieldRef:
