@@ -134,10 +134,14 @@ http {
         metadata_buffer:set('serviceName', os.getenv("SW_SERVICE_NAME"))
         -- Instance means the number of Nginx deployment, does not mean the worker instances
         metadata_buffer:set('serviceInstanceName', os.getenv("SW_SERVICE_INSTANCE_NAME"))
+        -- type 'boolean', mark the entrySpan include host/domain
+        metadata_buffer:set('includeHostInEntrySpan', true)
 
         -- set random seed
         require("skywalking.util").set_randomseed()
         require("skywalking.client"):startBackendTimer(os.getenv("SW_BACKEND_SERVERS"))
+
+        skywalking_tracer = require("skywalking.tracer")
     }
 
     {{/* Enable the real_ip module only if we use either X-Forwarded headers or Proxy Protocol. */}}
@@ -990,7 +994,7 @@ stream {
                 plugins.run()
 
                 -- Skywalking
-                require("skywalking.tracer"):start({{ buildUpstreamName $location | quote }})
+                skywalking_tracer:start({{ buildUpstreamName $location | quote }})
             }
 
             {{ if shouldConfigureLuaRestyWAF $all.Cfg.DisableLuaRestyWAF $location.LuaRestyWAF.Mode }}
@@ -1060,7 +1064,7 @@ stream {
 
                 -- Skywalking
                 if ngx.arg[2] then
-                    require("skywalking.tracer"):finish()
+                    skywalking_tracer:finish()
                 end
             }
 
@@ -1078,7 +1082,7 @@ stream {
                 plugins.run()
 
                 -- Skywalking
-                require("skywalking.tracer"):prepareForReport()
+                skywalking_tracer:prepareForReport()
             }
 
             {{ if not $location.Logs.Access }}

@@ -2,7 +2,7 @@ FROM busybox
 
 WORKDIR /tmp
 
-ENV SKYWALKING_VERSION v0.3.0
+ENV SKYWALKING_VERSION v0.4.1
 
 RUN set -eux ;\
 	wget -O skywalking.tar.gz https://github.com/apache/skywalking-nginx-lua/archive/${SKYWALKING_VERSION}.tar.gz ;\
